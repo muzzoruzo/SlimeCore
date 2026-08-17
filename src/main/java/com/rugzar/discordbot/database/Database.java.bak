@@ -1,0 +1,84 @@
+package com.rugzar.discordbot.database;
+
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.SQLException;
+import java.sql.Statement;
+
+public class Database {
+
+    private static final String URL = "jdbc:sqlite:discordbot.db";
+
+    public static void init() {
+        try (Connection connection = DriverManager.getConnection(URL);
+             Statement statement = connection.createStatement()) {
+
+            statement.execute("""
+                CREATE TABLE IF NOT EXISTS warnings (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    guild_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    moderator_id TEXT NOT NULL,
+                    reason TEXT NOT NULL,
+                    created_at INTEGER NOT NULL
+                )
+            """);
+
+            statement.execute("""
+                CREATE TABLE IF NOT EXISTS guild_settings (
+                    guild_id TEXT PRIMARY KEY,
+                    log_channel_id TEXT,
+                    welcome_channel_id TEXT,
+                    goodbye_channel_id TEXT,
+                    ticket_category_id TEXT,
+                    ticket_panel_channel_id TEXT,
+                    ticket_support_role_id TEXT,
+                    ticket_log_channel_id TEXT
+                )
+            """);
+
+            addColumnIfMissing(statement, "guild_settings", "welcome_channel_id");
+            addColumnIfMissing(statement, "guild_settings", "goodbye_channel_id");
+            addColumnIfMissing(statement, "guild_settings", "ticket_category_id");
+            addColumnIfMissing(statement, "guild_settings", "ticket_panel_channel_id");
+            addColumnIfMissing(statement, "guild_settings", "ticket_support_role_id");
+            addColumnIfMissing(statement, "guild_settings", "ticket_log_channel_id");
+
+            statement.execute("""
+                CREATE TABLE IF NOT EXISTS ticket_support_roles (
+                    guild_id TEXT NOT NULL,
+                    role_id TEXT NOT NULL,
+                    PRIMARY KEY (guild_id, role_id)
+                )
+            """);
+
+            System.out.println("SQLite veritabanı hazır!");
+
+        } catch (SQLException e) {
+            System.err.println("SQLite veritabanı başlatılamadı!");
+            e.printStackTrace();
+        }
+    }
+
+    private static void addColumnIfMissing(
+            Statement statement,
+            String table,
+            String column
+    ) throws SQLException {
+
+        try {
+            statement.execute(
+                    "ALTER TABLE " + table +
+                    " ADD COLUMN " + column + " TEXT"
+            );
+        } catch (SQLException e) {
+            if (!e.getMessage().toLowerCase().contains("duplicate column")) {
+                throw e;
+            }
+        }
+    }
+
+    public static Connection getConnection() throws SQLException {
+        return DriverManager.getConnection(URL);
+    }
+}

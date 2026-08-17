@@ -1,0 +1,807 @@
+package com.rugzar.discordbot.events;
+
+import com.rugzar.discordbot.database.Database;
+import net.dv8tion.jda.api.Permission;
+import net.dv8tion.jda.api.components.actionrow.ActionRow;
+import net.dv8tion.jda.api.components.buttons.Button;
+import net.dv8tion.jda.api.entities.Member;
+import net.dv8tion.jda.api.entities.Message;
+import net.dv8tion.jda.api.entities.Role;
+import net.dv8tion.jda.api.entities.channel.concrete.Category;
+import net.dv8tion.jda.api.entities.channel.concrete.TextChannel;
+import net.dv8tion.jda.api.events.interaction.component.ButtonInteractionEvent;
+import net.dv8tion.jda.api.hooks.ListenerAdapter;
+import net.dv8tion.jda.api.utils.FileUpload;
+
+import java.nio.charset.StandardCharsets;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.EnumSet;
+import java.util.List;
+
+public class TicketButtonEvent extends ListenerAdapter {
+
+    @Override
+    public void onButtonInteraction(ButtonInteractionEvent event) {
+
+        if (!event.isFromGuild()) return;
+
+        String id = event.getComponentId();
+
+
+        // ==============================
+        // YETKİLİ ÇAĞIR
+        // ==============================
+        if (id.equals("ticket:staff")) {
+            TextChannel channel = event.getChannel().asTextChannel();
+
+            List<Role> supportRoles = new ArrayList<>();
+
+            try (
+                    Connection connection = Database.getConnection();
+                    PreparedStatement statement = connection.prepareStatement("""
+                        SELECT role_id
+                        FROM ticket_support_roles
+                        WHERE guild_id = ?
+                        """)
+            ) {
+                statement.setString(1, event.getGuild().getId());
+
+                try (ResultSet result = statement.executeQuery()) {
+                    while (result.next()) {
+                        Role role = event.getGuild().getRoleById(result.getString("role_id"));
+                        if (role != null) {
+                            supportRoles.add(role);
+                        }
+                    }
+                }
+
+            } catch (Exception e) {
+                e.printStackTrace();
+                event.reply("❌ Destek rolleri alınırken bir hata oluştu.")
+                        .setEphemeral(true).queue();
+                return;
+            }
+
+            if (supportRoles.isEmpty()) {
+                event.reply("❌ Ticket destek rolü ayarlanmamış.")
+                        .setEphemeral(true).queue();
+                return;
+            }
+
+            StringBuilder mentions = new StringBuilder();
+            for (Role role : supportRoles) {
+                mentions.append(role.getAsMention()).append(" ");
+            }
+
+            event.reply("📢 Yetkililer çağrıldı!").setEphemeral(true).queue();
+
+            channel.sendMessage(
+                    mentions + "\n📢 **Ticket sahibi yetkili desteği istiyor!**"
+            ).queue();
+
+            return;
+        }
+        // ==============================
+        // DESTEK ROLÜ KONTROLÜ
+        // ==============================
+
+        if (id.equals("ticket:close") || id.equals("ticket:delete")) {
+
+            if (!isSupport(event)) {
+                event.reply(
+                        "❌ Bu işlemi sadece **destek ekibi** yapabilir."
+                ).setEphemeral(true).queue();
+
+                return;
+            }
+        }
+
+        // ==============================
+        // TICKET KAPAT
+        // ==============================
+
+        // ==============================
+        // YETKİLİ ÇAĞIR
+        // ==============================
+
+        if (id.equals("ticket:staff")) {
+
+            String guildId = event.getGuild().getId();
+            StringBuilder mentions = new StringBuilder();
+
+            try (
+                    Connection connection = Database.getConnection();
+                    PreparedStatement statement = connection.prepareStatement("""
+                        SELECT role_id
+                        FROM ticket_support_roles
+                        WHERE guild_id = ?
+                        """)
+            ) {
+
+                statement.setString(1, guildId);
+
+                try (ResultSet result = statement.executeQuery()) {
+
+                    while (result.next()) {
+
+                        Role role = event.getGuild().getRoleById(
+                                result.getString("role_id")
+                        );
+
+                        if (role != null) {
+                            mentions.append(role.getAsMention()).append(" ");
+                        }
+                    }
+                }
+
+                if (mentions.length() == 0) {
+                    event.reply(
+                            "❌ Ayarlanmış bir destek rolü bulunamadı."
+                    ).setEphemeral(true).queue();
+                    return;
+                }
+
+                event.reply(
+                        "📢 Yetkililer çağrılıyor..."
+                ).setEphemeral(true).queue();
+
+                event.getChannel().asTextChannel()
+                        .sendMessage(
+                                "📢 **Yetkili Çağrısı!**\n"
+                                + event.getUser().getAsMention()
+                                + " destek ekibi yardımı istiyor.\n\n"
+                                + mentions
+                        )
+                        .queue();
+
+            } catch (Exception e) {
+
+                e.printStackTrace();
+
+                if (!event.isAcknowledged()) {
+                    event.reply(
+                            "❌ Yetkililer çağrılırken bir hata oluştu."
+                    ).setEphemeral(true).queue();
+                }
+            }
+
+            return;
+        }
+
+        if (id.equals("ticket:close")) {
+
+            TextChannel channel = event.getChannel().asTextChannel();
+
+            event.reply(
+                    "🔒 Ticket kapatılıyor..."
+            ).setEphemeral(true).queue();
+
+            String topic = channel.getTopic();
+
+            // Ticket sahibinin yazmasını engelle
+            String ownerId = getTicketOwner(channel);
+
+            if (ownerId != null) {
+
+                Member owner = event.getGuild().getMemberById(ownerId);
+
+                if (owner != null) {
+
+                    channel.getManager()
+                            .putPermissionOverride(
+                                    owner,
+                                    null,
+                                    EnumSet.of(Permission.MESSAGE_SEND)
+                            )
+                            .queue();
+                }
+            }
+
+            // Ticketı kapat
+            String newTopic;
+
+            if (topic == null || topic.isBlank()) {
+                newTopic = "ticket-owner:" + ownerId + "\nticket-closed";
+            } else if (!topic.contains("ticket-closed")) {
+                newTopic = topic + "\nticket-closed";
+            } else {
+                newTopic = topic;
+            }
+
+            channel.getManager()
+                    .setName(
+                            channel.getName().startsWith("closed-")
+                                    ? channel.getName()
+                                    : "closed-" + channel.getName()
+                    )
+                    .setTopic(newTopic)
+                    .queue();
+
+            // Kapatma butonunu silme butonuna çevir
+            event.getMessage()
+                    .editMessageComponents(
+                            ActionRow.of(
+                                    Button.danger(
+                                            "ticket:delete",
+                                            "🗑️ Ticketı Sil"
+                                    )
+                            )
+                    )
+                    .queue();
+
+            return;
+        }
+
+        // ==============================
+        // TICKET SİL
+        // ==============================
+
+        if (id.equals("ticket:delete")) {
+
+            String topic = event.getChannel().asTextChannel().getTopic();
+
+            if (topic == null || !topic.startsWith("ticket-owner:")) {
+                event.reply("❌ Ticket sahibi belirlenemedi.").setEphemeral(true).queue();
+                return;
+            }
+
+            String ownerId = topic.substring("ticket-owner:".length());
+            int newline = ownerId.indexOf('\n');
+            if (newline != -1) ownerId = ownerId.substring(0, newline);
+            ownerId = ownerId.trim();
+
+            if (!event.getUser().getId().equals(ownerId)) {
+                event.reply("❌ Ticketı sadece ticketı açan kişi silebilir.").setEphemeral(true).queue();
+                return;
+            }
+
+            event.reply(
+                    "⭐ **Sunduğumuz Destek 5 Üzerinden Kaçtı?**\n\n" +
+                    "Aşağıdan 1 ile 5 arasında bir puan seçin."
+            ).addComponents(
+                    ActionRow.of(
+                            Button.primary("ticket:rating:1", "1 ⭐"),
+                            Button.primary("ticket:rating:2", "2 ⭐"),
+                            Button.primary("ticket:rating:3", "3 ⭐"),
+                            Button.primary("ticket:rating:4", "4 ⭐"),
+                            Button.primary("ticket:rating:5", "5 ⭐")
+                    ),
+                    ActionRow.of(
+                            Button.secondary("ticket:comment", "💬 Yorum Yaz"),
+                            Button.success("ticket:submit", "📨 Formu Gönder"),
+                            Button.danger("ticket:delete_final", "🗑️ Ticketı Sil")
+                    )
+            ).setEphemeral(true).queue();
+
+            return;
+        }
+        if (id.equals("ticket:delete_final")) {
+
+            TextChannel channel = event.getChannel().asTextChannel();
+
+            event.reply(
+                    "📄 Ticket transcripti hazırlanıyor..."
+            ).setEphemeral(true).queue();
+
+            channel.getHistory()
+                    .retrievePast(100)
+                    .queue(messages -> {
+
+                        try {
+
+                            // Mesajları kronolojik sıraya çevir
+                            List<Message> ordered =
+                                    new ArrayList<>(messages);
+
+                            Collections.reverse(ordered);
+
+                            // Transcript oluştur
+                            String transcript =
+                                    TicketTranscript.create(
+                                            channel,
+                                            ordered
+                                    );
+
+                            byte[] data =
+                                    transcript.getBytes(
+                                            StandardCharsets.UTF_8
+                                    );
+
+                            // ==============================
+                            // LOG KANALINI BUL
+                            // ==============================
+
+                            String logChannelId = null;
+
+                            try (
+                                    Connection connection =
+                                            Database.getConnection();
+
+                                    PreparedStatement statement =
+                                            connection.prepareStatement("""
+                                                SELECT ticket_log_channel_id
+                                                FROM guild_settings
+                                                WHERE guild_id = ?
+                                                """)
+                            ) {
+
+                                statement.setString(
+                                        1,
+                                        event.getGuild().getId()
+                                );
+
+                                try (
+                                        ResultSet result =
+                                                statement.executeQuery()
+                                ) {
+
+                                    if (result.next()) {
+
+                                        logChannelId =
+                                                result.getString(
+                                                        "ticket_log_channel_id"
+                                                );
+                                    }
+                                }
+                            }
+
+                            // ==============================
+                            // LOG KANALINA TRANSCRIPT GÖNDER
+                            // ==============================
+
+                            if (logChannelId != null &&
+                                    !logChannelId.isBlank()) {
+
+                                TextChannel logChannel =
+                                        event.getGuild()
+                                                .getTextChannelById(
+                                                        logChannelId
+                                                );
+
+                                if (logChannel != null) {
+
+                                    String ticketOwnerId =
+                                            getTicketOwner(channel);
+
+                                    String ownerText;
+
+                                    if (ticketOwnerId == null) {
+
+                                        ownerText = "Bilinmiyor";
+
+                                    } else {
+
+                                        Member owner =
+                                                event.getGuild()
+                                                        .getMemberById(
+                                                                ticketOwnerId
+                                                        );
+
+                                        if (owner != null) {
+
+                                            ownerText =
+                                                    owner.getUser()
+                                                            .getName()
+                                                            + " ("
+                                                            + owner.getAsMention()
+                                                            + ")";
+
+                                        } else {
+
+                                            ownerText =
+                                                    "<@"
+                                                            + ticketOwnerId
+                                                            + ">";
+                                        }
+                                    }
+
+                                    logChannel.sendMessage(
+                                            "📄 **Ticket Transcript**\n\n"
+                                                    + "🎫 Ticket: `"
+                                                    + channel.getName()
+                                                    + "`\n"
+                                                    + "👤 Ticket sahibi: "
+                                                    + ownerText
+                                                    + "\n"
+                                                    + "🔨 Kapatan yetkili: "
+                                                    + event.getUser()
+                                                    .getAsMention()
+                                    )
+                                            .addFiles(
+                                                    FileUpload.fromData(
+                                                            data,
+                                                            channel.getName()
+                                                                    + "-transcript.txt"
+                                                    )
+                                            )
+                                            .queue();
+                                }
+                            }
+
+                            // Transcript gönderildikten sonra sil
+                            channel.delete()
+                                    .reason(
+                                            "Ticket destek ekibi tarafından silindi."
+                                    )
+                                    .queue();
+
+                        } catch (Exception e) {
+
+                            e.printStackTrace();
+
+                            channel.sendMessage(
+                                    "❌ Transcript oluşturulurken bir hata oluştu. "
+                                            + "Ticket silinmedi."
+                            ).queue();
+                        }
+                    });
+
+            return;
+        }
+
+        // ==============================
+        // TICKET AÇ
+        // ==============================
+
+        if (!id.equals("ticket:open")) return;
+
+        String guildId =
+                event.getGuild().getId();
+
+        try (
+                Connection connection =
+                        Database.getConnection();
+
+                PreparedStatement statement =
+                        connection.prepareStatement("""
+                            SELECT ticket_category_id
+                            FROM guild_settings
+                            WHERE guild_id = ?
+                            """)
+        ) {
+
+            statement.setString(
+                    1,
+                    guildId
+            );
+
+            try (
+                    ResultSet result =
+                            statement.executeQuery()
+            ) {
+
+                if (!result.next()) {
+
+                    event.reply(
+                            "❌ Ticket sistemi bu sunucuda kurulmamış."
+                    ).setEphemeral(true).queue();
+
+                    return;
+                }
+
+                String categoryId =
+                        result.getString(
+                                "ticket_category_id"
+                        );
+
+                Category category =
+                        event.getJDA()
+                                .getCategoryById(
+                                        categoryId
+                                );
+
+                if (category == null) {
+
+                    event.reply(
+                            "❌ Ticket kategorisi bulunamadı."
+                    ).setEphemeral(true).queue();
+
+                    return;
+                }
+
+                Member member =
+                        event.getMember();
+
+                if (member == null) {
+
+                    event.reply(
+                            "❌ Kullanıcı bilgisi alınamadı."
+                    ).setEphemeral(true).queue();
+
+                    return;
+                }
+
+                // ==============================
+                // DESTEK ROLLERİNİ AL
+                // ==============================
+
+                List<Role> supportRoles =
+                        new ArrayList<>();
+
+                try (
+                        PreparedStatement roleStatement =
+                                connection.prepareStatement("""
+                                    SELECT role_id
+                                    FROM ticket_support_roles
+                                    WHERE guild_id = ?
+                                    """)
+                ) {
+
+                    roleStatement.setString(
+                            1,
+                            guildId
+                    );
+
+                    try (
+                            ResultSet roles =
+                                    roleStatement.executeQuery()
+                    ) {
+
+                        while (roles.next()) {
+
+                            Role role =
+                                    event.getGuild()
+                                            .getRoleById(
+                                                    roles.getString(
+                                                            "role_id"
+                                                    )
+                                            );
+
+                            if (role != null) {
+                                supportRoles.add(role);
+                            }
+                        }
+                    }
+                }
+
+                if (supportRoles.isEmpty()) {
+
+                    event.reply(
+                            "❌ Ticket destek rolü ayarlanmamış."
+                    ).setEphemeral(true).queue();
+
+                    return;
+                }
+
+                // ==============================
+                // AYNI TICKET KONTROLÜ
+                // ==============================
+
+                String ticketName =
+                        "ticket-" +
+                                event.getUser().getName();
+
+                for (
+                        TextChannel channel :
+                        category.getTextChannels()
+                ) {
+
+                    if (
+                            channel.getName()
+                                    .equalsIgnoreCase(ticketName)
+                    ) {
+
+                        event.reply(
+                                "❌ Zaten açık bir ticketın var: "
+                                        + channel.getAsMention()
+                        ).setEphemeral(true).queue();
+
+                        return;
+                    }
+                }
+
+                // ==============================
+                // TICKET OLUŞTUR
+                // ==============================
+
+                var action =
+                        category.createTextChannel(
+                                ticketName
+                        )
+
+                        // Ticket sahibinin ID'sini topic'e yaz
+                        .setTopic(
+                                "ticket-owner:" +
+                                        member.getId()
+                        )
+
+                        // Herkese gizle
+                        .addPermissionOverride(
+                                event.getGuild()
+                                        .getPublicRole(),
+                                null,
+                                EnumSet.of(
+                                        Permission.VIEW_CHANNEL
+                                )
+                        )
+
+                        // Ticket sahibine izin
+                        .addPermissionOverride(
+                                member,
+                                EnumSet.of(
+                                        Permission.VIEW_CHANNEL,
+                                        Permission.MESSAGE_SEND,
+                                        Permission.MESSAGE_HISTORY
+                                ),
+                                null
+                        );
+
+                // ==============================
+                // TÜM DESTEK ROLLERİ
+                // ==============================
+
+                for (Role supportRole : supportRoles) {
+
+                    action.addPermissionOverride(
+                            supportRole,
+                            EnumSet.of(
+                                    Permission.VIEW_CHANNEL,
+                                    Permission.MESSAGE_SEND,
+                                    Permission.MESSAGE_HISTORY,
+                                    Permission.MANAGE_CHANNEL
+                            ),
+                            null
+                    );
+                }
+
+                action.queue(channel -> {
+
+                    channel.sendMessage(
+                            "🎫 **Ticket Açıldı**\n\n"
+                                    + "Merhaba "
+                                    + member.getAsMention()
+                                    + "!\n"
+                                    + "Yetkililer kısa süre içerisinde "
+                                    + "seninle ilgilenecektir.\n\n"
+                                    + "🔒 Ticket kapatmak için destek ekibine başvur."
+                    )
+                            .setComponents(
+                                            ActionRow.of(
+                                                    Button.primary(
+                                                            "ticket:staff",
+                                                            "📢 Yetkili Çağır"
+                                                    ),
+                                                    Button.danger(
+                                                            "ticket:close",
+                                                            "🔒 Ticket Kapat"
+                                                    )
+                                            )
+                                    )
+                            .queue();
+
+                    event.reply(
+                            "✅ Ticketın oluşturuldu: "
+                                    + channel.getAsMention()
+                    ).setEphemeral(true).queue();
+                });
+            }
+
+        } catch (Exception e) {
+
+            e.printStackTrace();
+
+            if (!event.isAcknowledged()) {
+
+                event.reply(
+                        "❌ Ticket oluşturulurken bir hata oluştu."
+                ).setEphemeral(true).queue();
+            }
+        }
+    }
+
+    // ==============================
+    // TICKET SAHİBİNİ BUL
+    // ==============================
+
+    private String getTicketOwner(
+            TextChannel channel
+    ) {
+
+        String topic =
+                channel.getTopic();
+
+        if (
+                topic == null ||
+                !topic.startsWith("ticket-owner:")
+        ) {
+            return null;
+        }
+
+        String ownerId =
+                topic.substring(
+                        "ticket-owner:".length()
+                );
+
+        // ticket-closed gibi sonraki bilgileri alma
+        int newline =
+                ownerId.indexOf('\n');
+
+        if (newline != -1) {
+            ownerId =
+                    ownerId.substring(
+                            0,
+                            newline
+                    );
+        }
+
+        ownerId =
+                ownerId.trim();
+
+        // Sadece Discord ID kabul et
+        if (!ownerId.matches("[0-9]+")) {
+            return null;
+        }
+
+        return ownerId;
+    }
+
+    // ==============================
+    // DESTEK ROLÜ KONTROLÜ
+    // ==============================
+
+    private boolean isSupport(
+            ButtonInteractionEvent event
+    ) {
+
+        Member member =
+                event.getMember();
+
+        if (member == null) {
+            return false;
+        }
+
+        try (
+                Connection connection =
+                        Database.getConnection();
+
+                PreparedStatement statement =
+                        connection.prepareStatement("""
+                            SELECT role_id
+                            FROM ticket_support_roles
+                            WHERE guild_id = ?
+                            """)
+        ) {
+
+            statement.setString(
+                    1,
+                    event.getGuild().getId()
+            );
+
+            try (
+                    ResultSet result =
+                            statement.executeQuery()
+            ) {
+
+                while (result.next()) {
+
+                    Role role =
+                            event.getGuild()
+                                    .getRoleById(
+                                            result.getString(
+                                                    "role_id"
+                                            )
+                                    );
+
+                    if (
+                            role != null &&
+                            member.getRoles()
+                                    .contains(role)
+                    ) {
+
+                        return true;
+                    }
+                }
+            }
+
+        } catch (Exception e) {
+
+            e.printStackTrace();
+        }
+
+        return false;
+    }
+}
