@@ -17,6 +17,8 @@ import com.rugzar.discordbot.commands.TicketLogCommand;
 import com.rugzar.discordbot.commands.TicketRoleCommand;
 import com.rugzar.discordbot.commands.WelcomeSetupCommand;
 import com.rugzar.discordbot.commands.GoodbyeSetupCommand;
+import com.rugzar.discordbot.commands.RolVerCommand;
+import com.rugzar.discordbot.commands.RolAlCommand;
 import com.rugzar.discordbot.events.MessageDeleteLog;
 import com.rugzar.discordbot.events.MessageCache;
 import com.rugzar.discordbot.events.MessageEditLog;
@@ -68,6 +70,8 @@ public class Main {
                         new TicketRatingEvent(),
                         new WelcomeSetupCommand(),
                         new GoodbyeSetupCommand(),
+                        new RolVerCommand(),
+                        new RolAlCommand(),
                         new MessageCache(),
                         new MessageEditLog(),
                         new MessageDeleteLog(),
@@ -87,6 +91,8 @@ public class Main {
         jda.upsertCommand("warn", "Bir kullanıcıya uyarı verir.").addOption(OptionType.USER, "kullanici", "Uyarılacak kullanıcı", true).addOption(OptionType.STRING, "sebep", "Uyarı sebebi", true).queue();
         jda.upsertCommand("warns", "Bir kullanıcının uyarı geçmişini gösterir.").addOption(OptionType.USER, "kullanici", "Uyarıları gösterilecek kullanıcı", true).queue();
         jda.upsertCommand("clearwarns", "Bir kullanıcının tüm uyarılarını siler.").addOption(OptionType.USER, "kullanici", "Uyarıları temizlenecek kullanıcı", true).queue();
+        jda.upsertCommand("rolver", "Bir kullanıcıya rol verir.").addOption(OptionType.USER, "kullanici", "Rol verilecek kullanıcı", true).addOption(OptionType.ROLE, "rol", "Verilecek rol", true).queue();
+        jda.upsertCommand("rolal", "Bir kullanıcıdan rol alır.").addOption(OptionType.USER, "kullanici", "Rolü alınacak kullanıcı", true).addOption(OptionType.ROLE, "rol", "Alınacak rol", true).queue();
         jda.upsertCommand("logayarla", "Moderasyon log kanalını ayarlar.").addOption(OptionType.CHANNEL, "kanal", "Logların gönderileceği kanal", true).queue();
 
         // /help
