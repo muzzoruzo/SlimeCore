@@ -1,5 +1,6 @@
 package com.rugzar.discordbot.commands;
 
+import com.rugzar.discordbot.logging.LogManager;
 import net.dv8tion.jda.api.Permission;
 import net.dv8tion.jda.api.entities.Member;
 import net.dv8tion.jda.api.entities.Role;
@@ -63,12 +64,26 @@ public class RolVerCommand extends ListenerAdapter {
         }
 
         event.getGuild().addRoleToMember(target, role).queue(
-                success -> event.reply(
-                        "✅ **" + role.getName() + "** rolü " + target.getAsMention() + " kullanıcısına verildi."
-                ).queue(),
-                error -> event.reply("❌ Rol verilirken bir hata oluştu.")
-                        .setEphemeral(true)
-                        .queue()
+                success -> {
+
+                    event.reply(
+                            "✅ **" + role.getName() + "** rolü "
+                                    + target.getAsMention()
+                                    + " kullanıcısına verildi."
+                    ).queue();
+
+                    LogManager.send(
+                            event.getJDA(),
+                            event.getGuild().getId(),
+                            "🎭 Rol Verildi",
+                            "👤 **Kullanıcı:** " + target.getAsMention()
+                                    + "\n🎭 **Rol:** " + role.getAsMention()
+                                    + "\n🛡️ **Yetkili:** " + executor.getAsMention()
+                    );
+                },
+                error -> event.reply(
+                        "❌ Rol verilirken bir hata oluştu. Botun **Rolleri Yönet** yetkisini ve rol hiyerarşisini kontrol et."
+                ).setEphemeral(true).queue()
         );
     }
 }
